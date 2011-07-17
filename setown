@@ -5,9 +5,6 @@
  *  @file
  *  A script to enforce ownership of drupal and wordpress webroots.
  * 
- */
-
-/**
  *  This script is designed to enforce ownership settings on a wordpress or
  *  drupal webroot. Permissions are defined n the 3 dimensional array called
  *  $desired_settings. All files are checked first to see if any settings need
@@ -18,7 +15,7 @@
  *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
  *    v1.0, last edited 7/15/2011
  *
- *      @param platform
+ *  @param platform
  *    Specify the software platform to check. Acceptable values are
  *    "wordpress", "drupal6", and "drupal7".
  *  @param target
@@ -37,6 +34,9 @@
  *    e file upload directories). Defaults to "apache".
  *  @param debug
  *    Optionally enable extra debugging statements.
+ *
+ *  @return
+ *    Returns true if no errors were encountered, false otherwise.
  */
 
 putenv('TZ=America/Denver');
@@ -155,7 +155,14 @@ $desired_perms = array(
 
 foreach ($desired_perms[$platform] as $file=>$setting) {
   if (!file_exists("$target/$file")) { continue; };
-  apply_settings("$target/$file", $target, $setting["owner"], $setting["group"]);
+  apply_settings("$target/$file", $setting["owner"], $setting["group"]);
+}
+
+if (count($errors) == 0) {
+  return true;
+}
+else {
+  return false;
 }
 
 
@@ -176,9 +183,18 @@ function usage () {
 /*
  *  Logs a message.
  *  
- *  Supports various message types, including debug, error, and info. Debug messages are printing to STDOUT
+ *  Supports various message types, including debug, error, and info. Debug 
+ *  messages are printing to STDOUT, while error messages are printed to STDOUT 
+ *  and the log file, and info messages are only printed to the log file.
+ *
+ *  @param string $type
+ *    "debug" and "error" are handled specially, everything else ("info", for
+ *    instance) is just written to the log file.
+ *
+ *  @param string $message
+ *    The message to log. Newline is appended to the end automatically, so
+ *    there's no need to include it.
  */
-
 function log_this ($type, $message) {
   global $logfile, $debug;
   $handle = fopen($logfile, "a");
@@ -198,10 +214,18 @@ function log_this ($type, $message) {
 }
 
 /*
- *  The validate_target function checks the target location provided to ensure that it looks 
- *  like a valid $platform webroot.
+ *  Checks the target location provided to ensure that it looks like a valid 
+ *  $platform webroot.
+ *
+ *  @param string $platform
+ *    Web platform to check for - "wordpress" or "drupal6" or whatever.
+ *  @param string $target
+ *    The target location to check.
+ *
+ *  @return
+ *    True if the webroot is confirmed to be a $platform install, otherwise
+ *    false.
  */
-
 function validate_target ($platform, $target) {
   if ($platform == "wordpress") {
     if(!file_exists("$target/wp-config.php") || !file_exists("$target/wp-admin/") || !file_exists("$target/wp-content/")) {
@@ -222,12 +246,21 @@ function validate_target ($platform, $target) {
 }
 
 /*
- *  The apply_settings function guarantees that the owner and group of $file will be set to $owner and $group.
- *  If $file is a directory, the settings will be applied recursively. If changes are required, they will be
- *  logged.
+ *  Sets owner and group of specified file.
+ *
+ *  All changes, whether successful or not, are logged.
+ *
+ *  @param $file
+ *    Full path to file.
+ *  @param $owner
+ *    User name of desired owner.
+ *  @param $group
+ *    Name of desired group.
+ *
+ *  @return
+ *    True if the settings were applied successfully, otherwise false.
  */
-
-function apply_settings ($file, $directory, $owner, $group) {
+function apply_settings ($file, $owner, $group) {
   global $debug, $errors, $desired_perms, $platform;
   if (in_array($file, $errors)) { return false; }
   if (preg_match("/.*\/([^\/]+)$/", $file, $matches)) {               // Parse for just the filename
@@ -259,23 +292,31 @@ function apply_settings ($file, $directory, $owner, $group) {
       exec("find $file -not -group $group", $group_files);    // Find any files not owned by $group.
       if (count($owner_files) > 0) {
         foreach ($owner_files as $bad_file) {
-          apply_settings($bad_file, $directory, $owner, $group);
+          apply_settings($bad_file, $owner, $group);
         }
       }
       if (count($group_files) > 0) {
         foreach ($group_files as $bad_file) {
-          apply_settings($bad_file, $directory, $owner, $group);
+          apply_settings($bad_file, $owner, $group);
         }
       }
       break;
   }
+  $new_uid_info = posix_getpwuid(fileowner($file));
+  $new_gid_info = posix_getgrgid(filegroup($file));
+  $new_current_owner = $new_uid_info["name"];
+  $new_current_group = $new_gid_info["name"];
+  if (($new_current_owner == $owner) && ($new_current_group == $group)) {
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
 /* 
- *  The change_owner function attempts to change the owner of $file to $owner. If the change fails, 
- *  it returns false.
+ *  Changes the owner of specified file.
  */
-
 function change_owner ($file, $owner) {
   global $successes, $errors;
   $uid_info = posix_getpwuid(fileowner($file));
@@ -294,10 +335,8 @@ function change_owner ($file, $owner) {
 }
 
 /* 
- *  The change_group function attempts to change the group of $file to $group. If the change fails, 
- *  it logs an error.
+ *  Changes the group of specified file.
  */
-
 function change_group ($file, $group) {
   global $successes, $errors;
   $gid_info = posix_getgrgid(filegroup($file));
@@ -316,9 +355,8 @@ function change_group ($file, $group) {
 }
 
 /* 
- *  The group_exists function returns true if a given group exists, false if it does not.
+ *  Checks if the specified group exists.
  */
-
 function group_exists ($group) {
   exec("/bin/grep $group: /etc/group", $output, $return);
   if ($return != 0) {
@@ -328,9 +366,8 @@ function group_exists ($group) {
 }
 
 /* 
- *  The user_exists function returns true if a given group exists, false if it does not.
+ *  Checks if the specified user exists.
  */
-
 function user_exists ($user) {
   exec("/bin/grep $user: /etc/passwd", $output, $return);
   if ($return != 0) {
