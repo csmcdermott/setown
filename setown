@@ -4,7 +4,9 @@
 /**
  *  @file
  *  A script to enforce ownership of drupal and wordpress webroots.
- * 
+ */
+
+/**
  *  This script is designed to enforce ownership settings on a wordpress or
  *  drupal webroot. Permissions are defined n the 3 dimensional array called
  *  $desired_settings. All files are checked first to see if any settings need
@@ -13,7 +15,7 @@
  *  messages in STDOUT.
  *
  *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
- *    v1.0, last edited 7/15/2011
+ *    v1.1 7/16/2011
  *
  *  @param platform
  *    Specify the software platform to check. Acceptable values are
@@ -38,12 +40,11 @@
  *  @return
  *    Returns true if no errors were encountered, false otherwise.
  */
-
 putenv('TZ=America/Denver');
 $debug = 0;
 $logfile = "./setown.log";
 
-
+// Start parsing arguments
 $options = getopt("p:t:o:g:w:dh");
 if (isset($options["h"])) { usage(); };
 if (!isset($options["p"])) { 
@@ -62,7 +63,7 @@ if (isset($options["o"])) {
   $owner = $options["o"]; 
 }
 else {
-  $owner = "root";
+  $owner = "root";            //  If no owner is provided, default to "root".
 }
 
 if (isset($options["g"])) { 
@@ -73,14 +74,14 @@ if (isset($options["g"])) {
   $group = $options["g"]; 
 }
 else {
-  $group = "root";
+  $group = "root";          //  If no group is provided, default to "root".
 }
 
 if (isset($options["w"])) { 
   $webuser = $options["w"]; 
 }
 else {
-  $webuser = "apache";
+  $webuser = "apache";    //  If no webuser is provided, default to "apache".
 }
 
 if (($options["p"] != "wordpress") && ($options["p"] != "drupal6") && ($options["p"] != "drupal7")) { 
@@ -92,16 +93,20 @@ if (isset($options["d"])) { $debug = 1; }
 $platform = $options["p"];
 $target = $options["t"];
 
+//  If debug was toggled, log all arguments
 if ($debug) {
   foreach($options as $key=>$value) {
     log_this("debug", "option $key: $value");
   }
 }
 
+//  If the target directory doesn't exist, bail out with an error.
 if (!file_exists($target)) {
   log_this("error", "$target does not exist.");
   exit(2);
 }
+//  If the target directory doesn't look like an installation of the specified
+//  platform, bail out with an error.
 elseif (!validate_target($platform, $target)) {
   log_this("error", "$target does not look like a valid $platform webroot.");
   exit(2);
@@ -115,7 +120,14 @@ if (preg_match("/(.*)\/$/", $target, $matches)) {
 $successes = array();
 $errors = array();
 
-// Set up arrays containing desired permissions for each platform. 
+/**
+ *  @array $desired_perms
+ *    A 3 dimensional array of ownership settings for each platform.
+ *    -platform: An array of supported platforms:
+ *      -file: An array of settings for the named file:
+ *        -owner: A string specifying the desired owner.
+ *        -group: A string specifying the desired group.
+ */
 $desired_perms = array(
   "wordpress" => array( 
     "wp-admin" => array(
@@ -153,18 +165,20 @@ $desired_perms = array(
   ),
 );
 
+//  Iterate through each file in the array of settings for the provided platform
+//  and apply the settings to it.
 foreach ($desired_perms[$platform] as $file=>$setting) {
   if (!file_exists("$target/$file")) { continue; };
   apply_settings("$target/$file", $setting["owner"], $setting["group"]);
 }
 
+//  Check for errors, return true or false, depending.
 if (count($errors) == 0) {
   return true;
 }
 else {
   return false;
 }
-
 
 /*
  *  Prints usage information and argument requirements.
@@ -248,6 +262,12 @@ function validate_target ($platform, $target) {
 /*
  *  Sets owner and group of specified file.
  *
+ *  Owner and group are checked first, and if the settings are already correct,
+ *  no action is taken. If they are not correct, the owner and/or group is
+ *  changed appropriately. If the file is a directory, a find command
+ *  identifies any files or subdirectories that also require changes, and the
+ *  function is called recursively on each of those.
+ *
  *  All changes, whether successful or not, are logged.
  *
  *  @param $file
@@ -263,8 +283,11 @@ function validate_target ($platform, $target) {
 function apply_settings ($file, $owner, $group) {
   global $debug, $errors, $desired_perms, $platform;
   if (in_array($file, $errors)) { return false; }
-  if (preg_match("/.*\/([^\/]+)$/", $file, $matches)) {               // Parse for just the filename
-    if (array_key_exists($matches[1], $desired_perms[$platform])) {   // If that exists in desired_perms then skip it
+  //  Parse for just the filename
+  if (preg_match("/.*\/([^\/]+)$/", $file, $matches)) {
+    //  If that exists in desired_perms then skip it, since we'll come back
+    //  to it later.
+    if (array_key_exists($matches[1], $desired_perms[$platform])) {
       return false;
     }
   }
@@ -273,7 +296,7 @@ function apply_settings ($file, $owner, $group) {
   $current_owner = $uid_info["name"];
   $current_group = $gid_info["name"];
   switch (filetype($file)) {
-    case "file":                                // If this is a file we only need to this stuff once.
+    case "file": 
       if ($current_owner != $owner) {
         change_owner($file, $owner);
       }
@@ -281,15 +304,17 @@ function apply_settings ($file, $owner, $group) {
         change_group($file, $group);
       }
       break;
-    case "dir":                               // If it's a directory then we need to do it for the
-      if ($current_owner != $owner) {         // dir itself, but also any files underneath that need it
+    case "dir":
+      if ($current_owner != $owner) {
         change_owner($file, $owner);
       }
       if ($current_group != $group) {
         change_group($file, $group);
       }
-      exec("find $file -not -user $owner", $owner_files);     // Find any files not owned by $owner.
-      exec("find $file -not -group $group", $group_files);    // Find any files not owned by $group.
+      //  Find any files not owned by $owner, and fix them recursively.
+      exec("find $file -not -user $owner", $owner_files);
+      //  Find any files not owned by $group, and fix them recursively.
+      exec("find $file -not -group $group", $group_files);
       if (count($owner_files) > 0) {
         foreach ($owner_files as $bad_file) {
           apply_settings($bad_file, $owner, $group);
@@ -302,6 +327,7 @@ function apply_settings ($file, $owner, $group) {
       }
       break;
   }
+  //  Check to see if changes were successful.
   $new_uid_info = posix_getpwuid(fileowner($file));
   $new_gid_info = posix_getgrgid(filegroup($file));
   $new_current_owner = $new_uid_info["name"];
