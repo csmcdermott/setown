@@ -1,0 +1,342 @@
+#!/usr/bin/php -q
+<?php
+
+/**
+ *  @file
+ *  A script to enforce ownership of drupal and wordpress webroots.
+ * 
+ */
+
+/**
+ *  This script is designed to enforce ownership settings on a wordpress or
+ *  drupal webroot. Permissions are defined n the 3 dimensional array called
+ *  $desired_settings. All files are checked first to see if any settings need
+ *  to be changed; if so, changes are attempted. Both successes and failures
+ *  are logged (log file is ./setown.log). Failures also generate error
+ *  messages in STDOUT.
+ *
+ *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
+ *    v1.0, last edited 7/15/2011
+ *
+ *      @param platform
+ *    Specify the software platform to check. Acceptable values are
+ *    "wordpress", "drupal6", and "drupal7".
+ *  @param target
+ *    Specify the directory where the software platform is installed. This is
+ *    the base directory used for all file interactions.
+ *  @param owner
+ *    Specify a default owner for files in the webroot (perhaps the primary
+ *    developer). This is an optional parameter - if it is omitted this
+ *    defaults to "root".
+ *  @param group
+ *    Similar to the owner parameter - this is the default group that should be
+ *    applied to webroot files. This is an optional parameter - if it is
+ *    omitted this defaults to "root".
+ *  @param webuser
+ *    Optional. Sets the user account in use by the web server (for things lik
+ *    e file upload directories). Defaults to "apache".
+ *  @param debug
+ *    Optionally enable extra debugging statements.
+ */
+
+putenv('TZ=America/Denver');
+$debug = 0;
+$logfile = "./setown.log";
+
+
+$options = getopt("p:t:o:g:w:dh");
+if (isset($options["h"])) { usage(); };
+if (!isset($options["p"])) { 
+  log_this("error", "-p option is required."); 
+  usage(); 
+}
+if (!isset($options["t"])) { 
+  log_this("error", "-t option is required."); 
+  usage(); 
+}
+if (isset($options["o"])) { 
+  if (!user_exists($options["o"])) {
+    log_this("error", "User: " . $options["o"] . " does not exist, please specify a valid user account.");
+    exit(2);
+  }
+  $owner = $options["o"]; 
+}
+else {
+  $owner = "root";
+}
+
+if (isset($options["g"])) { 
+  if (!group_exists($options["g"])) {
+    log_this("error", "Group: " . $options["g"] . " does not exist, please specify a valid group.");
+    exit(2);
+  }
+  $group = $options["g"]; 
+}
+else {
+  $group = "root";
+}
+
+if (isset($options["w"])) { 
+  $webuser = $options["w"]; 
+}
+else {
+  $webuser = "apache";
+}
+
+if (($options["p"] != "wordpress") && ($options["p"] != "drupal6") && ($options["p"] != "drupal7")) { 
+  log_this("error", "$options[p] is not a supported platform."); 
+  usage(); 
+}
+
+if (isset($options["d"])) { $debug = 1; }
+$platform = $options["p"];
+$target = $options["t"];
+
+if ($debug) {
+  foreach($options as $key=>$value) {
+    log_this("debug", "option $key: $value");
+  }
+}
+
+if (!file_exists($target)) {
+  log_this("error", "$target does not exist.");
+  exit(2);
+}
+elseif (!validate_target($platform, $target)) {
+  log_this("error", "$target does not look like a valid $platform webroot.");
+  exit(2);
+}
+
+// If the $target has a trailing slash, get rid of it.
+if (preg_match("/(.*)\/$/", $target, $matches)) {
+  $target = $matches[1];
+}
+
+$successes = array();
+$errors = array();
+
+// Set up arrays containing desired permissions for each platform. 
+$desired_perms = array(
+  "wordpress" => array( 
+    "wp-admin" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+    "wp-content" => array(
+  	  "owner" => $owner,
+  	  "group" => $group,
+    ),
+    "wp-includes" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+    "wp-content/uploads" => array(
+     "owner" => $webuser,
+     "group" => $group,
+    ),
+    ".htaccess" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+  },
+  "drupal6" => array(
+    "cron.php" => array(
+      "owner" => $owner,
+      "group" => $group,
+    ),
+  ),
+  "drupal7" => array(
+    "cron.php" => array(
+      "owner" => $owner,
+      "group" => $group,
+    ),
+  ),
+);
+
+foreach ($desired_perms[$platform] as $file=>$setting) {
+  if (!file_exists("$target/$file")) { continue; };
+  apply_settings("$target/$file", $target, $setting["owner"], $setting["group"]);
+}
+
+
+/*
+ *  Prints usage information and argument requirements.
+ */
+function usage () {
+  echo "Usage: at_setperms -p <wordpress|drupal6|drupal7> -t <targetdir> [-o owner] [-g group] [-d]\n";
+  echo "  -p platform         drupal6|drupal7|wordpress         required\n";
+  echo "  -t target           /var/www/html/wordpress           required\n";
+  echo "  -o owner            username                          optional, defaults to root\n";
+  echo "  -g group            groupname                         optional, defaults to root\n";
+  echo "  -w webuser          username(apache,www-user)         optional, defaults to apache\n";
+  echo "  -d                                                    optional, toggles debug\n\n";
+  exit (2);
+}
+
+/*
+ *  Logs a message.
+ *  
+ *  Supports various message types, including debug, error, and info. Debug messages are printing to STDOUT
+ */
+
+function log_this ($type, $message) {
+  global $logfile, $debug;
+  $handle = fopen($logfile, "a");
+  $timestamp = date("Y-m-d H:i") . "\t";
+  if ($type == "error") {
+    echo "ERROR: " . $message . "\n";
+    fwrite($handle, $timestamp . $message . "\n");
+  }
+  elseif (($type == "debug") && ($debug == 1)) {
+    echo "DEBUG: " . $message . "\n";
+    //fwrite($handle, $timestamp . $message . "\n");
+  }
+  else {
+    fwrite($handle, $timestamp . $message . "\n");
+  }
+  fclose($handle);
+}
+
+/*
+ *  The validate_target function checks the target location provided to ensure that it looks 
+ *  like a valid $platform webroot.
+ */
+
+function validate_target ($platform, $target) {
+  if ($platform == "wordpress") {
+    if(!file_exists("$target/wp-config.php") || !file_exists("$target/wp-admin/") || !file_exists("$target/wp-content/")) {
+      return false;
+    }
+    else { return true; }
+  }
+  else if (preg_match("/drupal/", $platform)) {
+    if(!file_exists("$target/sites/default/settings.php") || !file_exists("$target/includes/") || !file_exists("$target/modules/node/")) {
+      return false;
+    }
+    else { return true; }
+  }
+  else {
+    log_this("error", "Could not validate target directory, are you sure that $platform is a valid platform?");
+    return false;
+  }
+}
+
+/*
+ *  The apply_settings function guarantees that the owner and group of $file will be set to $owner and $group.
+ *  If $file is a directory, the settings will be applied recursively. If changes are required, they will be
+ *  logged.
+ */
+
+function apply_settings ($file, $directory, $owner, $group) {
+  global $debug, $errors, $desired_perms, $platform;
+  if (in_array($file, $errors)) { return false; }
+  if (preg_match("/.*\/([^\/]+)$/", $file, $matches)) {               // Parse for just the filename
+    if (array_key_exists($matches[1], $desired_perms[$platform])) {   // If that exists in desired_perms then skip it
+      return false;
+    }
+  }
+  $uid_info = posix_getpwuid(fileowner($file));
+  $gid_info = posix_getgrgid(filegroup($file));
+  $current_owner = $uid_info["name"];
+  $current_group = $gid_info["name"];
+  switch (filetype($file)) {
+    case "file":                                // If this is a file we only need to this stuff once.
+      if ($current_owner != $owner) {
+        change_owner($file, $owner);
+      }
+      if ($current_group != $group) {
+        change_group($file, $group);
+      }
+      break;
+    case "dir":                               // If it's a directory then we need to do it for the
+      if ($current_owner != $owner) {         // dir itself, but also any files underneath that need it
+        change_owner($file, $owner);
+      }
+      if ($current_group != $group) {
+        change_group($file, $group);
+      }
+      exec("find $file -not -user $owner", $owner_files);     // Find any files not owned by $owner.
+      exec("find $file -not -group $group", $group_files);    // Find any files not owned by $group.
+      if (count($owner_files) > 0) {
+        foreach ($owner_files as $bad_file) {
+          apply_settings($bad_file, $directory, $owner, $group);
+        }
+      }
+      if (count($group_files) > 0) {
+        foreach ($group_files as $bad_file) {
+          apply_settings($bad_file, $directory, $owner, $group);
+        }
+      }
+      break;
+  }
+}
+
+/* 
+ *  The change_owner function attempts to change the owner of $file to $owner. If the change fails, 
+ *  it returns false.
+ */
+
+function change_owner ($file, $owner) {
+  global $successes, $errors;
+  $uid_info = posix_getpwuid(fileowner($file));
+  $current_owner = $uid_info["name"];
+  exec("/bin/chown $owner $file 2>&1 > /dev/null", $output, $return);
+  if (!$return) {
+    log_this("info", "Changed owner of $file from $current_owner to $owner.");
+    array_push($successes, $file);
+    return true;
+  }
+  else {
+    log_this("error", "Failed to change owner of $file from $current_owner to $owner.");
+    array_push($errors, $file);
+    return false;
+  }
+}
+
+/* 
+ *  The change_group function attempts to change the group of $file to $group. If the change fails, 
+ *  it logs an error.
+ */
+
+function change_group ($file, $group) {
+  global $successes, $errors;
+  $gid_info = posix_getgrgid(filegroup($file));
+  $current_group = $gid_info["name"];
+  exec("/bin/chgrp $group $file 2>&1 > /dev/null", $output, $return);
+  if (!$return) {
+    log_this("info", "Changed group of $file from $current_group to $group.");
+    $successes++;
+    return true;
+  }
+  else {
+    log_this("error", "Failed to change group of $file from $current_group to $group.");
+    $errors++;
+    return false;
+  }
+}
+
+/* 
+ *  The group_exists function returns true if a given group exists, false if it does not.
+ */
+
+function group_exists ($group) {
+  exec("/bin/grep $group: /etc/group", $output, $return);
+  if ($return != 0) {
+    return false;
+  }
+  return true;
+}
+
+/* 
+ *  The user_exists function returns true if a given group exists, false if it does not.
+ */
+
+function user_exists ($user) {
+  exec("/bin/grep $user: /etc/passwd", $output, $return);
+  if ($return != 0) {
+    return false;
+  }
+  return true;
+}
+
+?>
