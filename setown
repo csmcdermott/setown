@@ -62,8 +62,10 @@ if (isset($options["o"])) {
   }
   $owner = $options["o"]; 
 }
+
+//  If no owner is provided, default to "root".
 else {
-  $owner = "root";            //  If no owner is provided, default to "root".
+  $owner = "root"; 
 }
 
 if (isset($options["g"])) { 
@@ -73,15 +75,18 @@ if (isset($options["g"])) {
   }
   $group = $options["g"]; 
 }
+
+//  If no group is provided, default to "root".
 else {
-  $group = "root";          //  If no group is provided, default to "root".
+  $group = "root";
 }
 
 if (isset($options["w"])) { 
   $webuser = $options["w"]; 
 }
+//  If no webuser is provided, default to "apache".
 else {
-  $webuser = "apache";    //  If no webuser is provided, default to "apache".
+  $webuser = "apache";
 }
 
 if (($options["p"] != "wordpress") && ($options["p"] != "drupal6") && ($options["p"] != "drupal7")) { 
@@ -105,6 +110,7 @@ if (!file_exists($target)) {
   log_this("error", "$target does not exist.");
   exit(2);
 }
+
 //  If the target directory doesn't look like an installation of the specified
 //  platform, bail out with an error.
 elseif (!validate_target($platform, $target)) {
@@ -311,9 +317,8 @@ function apply_settings ($file, $owner, $group) {
       if ($current_group != $group) {
         change_group($file, $group);
       }
-      //  Find any files not owned by $owner, and fix them recursively.
+      //  Find any files not owned by $owner or $group, and fix them recursively.
       exec("find $file -not -user $owner", $owner_files);
-      //  Find any files not owned by $group, and fix them recursively.
       exec("find $file -not -group $group", $group_files);
       if (count($owner_files) > 0) {
         foreach ($owner_files as $bad_file) {
