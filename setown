@@ -186,7 +186,7 @@ else {
   return false;
 }
 
-/*
+/**
  *  Prints usage information and argument requirements.
  */
 function usage () {
@@ -200,7 +200,7 @@ function usage () {
   exit (2);
 }
 
-/*
+/**
  *  Logs a message.
  *  
  *  Supports various message types, including debug, error, and info. Debug 
@@ -233,7 +233,7 @@ function log_this ($type, $message) {
   fclose($handle);
 }
 
-/*
+/**
  *  Checks the target location provided to ensure that it looks like a valid 
  *  $platform webroot.
  *
@@ -265,7 +265,7 @@ function validate_target ($platform, $target) {
   }
 }
 
-/*
+/**
  *  Sets owner and group of specified file.
  *
  *  Owner and group are checked first, and if the settings are already correct,
@@ -345,7 +345,7 @@ function apply_settings ($file, $owner, $group) {
   }
 }
 
-/* 
+/** 
  *  Changes the owner of specified file.
  */
 function change_owner ($file, $owner) {
@@ -365,7 +365,7 @@ function change_owner ($file, $owner) {
   }
 }
 
-/* 
+/** 
  *  Changes the group of specified file.
  */
 function change_group ($file, $group) {
@@ -385,7 +385,7 @@ function change_group ($file, $group) {
   }
 }
 
-/* 
+/** 
  *  Checks if the specified group exists.
  */
 function group_exists ($group) {
@@ -396,7 +396,7 @@ function group_exists ($group) {
   return true;
 }
 
-/* 
+/**
  *  Checks if the specified user exists.
  */
 function user_exists ($user) {
