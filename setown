@@ -15,7 +15,7 @@
  *  messages in STDOUT.
  *
  *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
- *    v1.1 7/16/2011
+ *    v1.2 7/16/2011
  *
  *  @param platform
  *    Specify the software platform to check. Acceptable values are
@@ -118,6 +118,8 @@ elseif (!validate_target($platform, $target)) {
   exit(2);
 }
 
+log_this("info", "Starting job.");
+
 // If the $target has a trailing slash, get rid of it.
 if (preg_match("/(.*)\/$/", $target, $matches)) {
   $target = $matches[1];
@@ -156,29 +158,76 @@ $desired_perms = array(
       "owner" => "root",
       "group" => "root",
     ),
-  },
+  ),
   "drupal6" => array(
-    "cron.php" => array(
+    "sites/default/settings.php" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+    ".htaccess" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+    "sites/all/modules" => array(
       "owner" => $owner,
+      "group" => $group,
+    ),
+    "sites/all/themes" => array(
+      "owner" => $owner,
+      "group" => $group,
+    ),
+    "sites/all/libraries" => array(
+      "owner" => $owner,
+      "group" => $group,
+    ),
+    "sites/default/files" => array(
+      "owner" => $webuser,
       "group" => $group,
     ),
   ),
   "drupal7" => array(
-    "cron.php" => array(
+    "sites/default/settings.php" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+    ".htaccess" => array(
+      "owner" => "root",
+      "group" => "root",
+    ),
+    "sites/all/modules" => array(
       "owner" => $owner,
+      "group" => $group,
+    ),
+    "sites/all/themes" => array(
+      "owner" => $owner,
+      "group" => $group,
+    ),
+    "sites/all/libraries" => array(
+      "owner" => $owner,
+      "group" => $group,
+    ),
+    "sites/default/files" => array(
+      "owner" => $webuser,
       "group" => $group,
     ),
   ),
 );
 
-//  Iterate through each file in the array of settings for the provided platform
-//  and apply the settings to it.
+//  First apply ownership settings to the root directory
+apply_settings($target, $owner, $group);
+//  Next, iterate through each file in the array of settings for the provided
+//  platform and apply the settings to it.
 foreach ($desired_perms[$platform] as $file=>$setting) {
-  if (!file_exists("$target/$file")) { continue; };
+  if (!file_exists("$target/$file")) { 
+    log_this("debug", "$target/$file does not exist, skipping.");
+    continue;
+  };
+  log_this("debug", "Applying ownership settings to $target/$file.");
   apply_settings("$target/$file", $setting["owner"], $setting["group"]);
 }
 
 //  Check for errors, return true or false, depending.
+log_this("info", "Job complete. " . count($successes) . " files successfully modified and " . count($errors) . " errors logged.");
 if (count($errors) == 0) {
   return true;
 }
@@ -190,7 +239,7 @@ else {
  *  Prints usage information and argument requirements.
  */
 function usage () {
-  echo "Usage: at_setperms -p <wordpress|drupal6|drupal7> -t <targetdir> [-o owner] [-g group] [-d]\n";
+  echo "Usage: setown -p <wordpress|drupal6|drupal7> -t <targetdir> [-o owner] [-g group] [-d]\n";
   echo "  -p platform         drupal6|drupal7|wordpress         required\n";
   echo "  -t target           /var/www/html/wordpress           required\n";
   echo "  -o owner            username                          optional, defaults to root\n";
@@ -287,20 +336,13 @@ function validate_target ($platform, $target) {
  *    True if the settings were applied successfully, otherwise false.
  */
 function apply_settings ($file, $owner, $group) {
-  global $debug, $errors, $desired_perms, $platform;
-  if (in_array($file, $errors)) { return false; }
-  //  Parse for just the filename
-  if (preg_match("/.*\/([^\/]+)$/", $file, $matches)) {
-    //  If that exists in desired_perms then skip it, since we'll come back
-    //  to it later.
-    if (array_key_exists($matches[1], $desired_perms[$platform])) {
-      return false;
-    }
+  global $debug, $errors, $successes, $desired_perms, $platform, $target;
+  if (in_array($file, $errors) || in_array($file, $successes)) { 
+    log_this("debug", "$file was already attempted.");
+    return false;
   }
-  $uid_info = posix_getpwuid(fileowner($file));
-  $gid_info = posix_getgrgid(filegroup($file));
-  $current_owner = $uid_info["name"];
-  $current_group = $gid_info["name"];
+  $current_owner = user_name(fileowner($file));
+  $current_group = group_name(filegroup($file));
   switch (filetype($file)) {
     case "file": 
       if ($current_owner != $owner) {
@@ -322,21 +364,40 @@ function apply_settings ($file, $owner, $group) {
       exec("find $file -not -group $group", $group_files);
       if (count($owner_files) > 0) {
         foreach ($owner_files as $bad_file) {
+          if ($bad_file == $file) {
+            continue;
+          }
+          //  Parse for just the filename
+          if (preg_match("@$target/(.+)$@", $bad_file, $matches)) {
+            //  If that exists in desired_perms then skip it, since we'll come back
+            //  to it later.
+            if (array_key_exists($matches[1], $desired_perms[$platform])) {
+              log_this("debug", "$bad_file is explicitly defined later, skipping.");
+              continue;
+            }
+          }
           apply_settings($bad_file, $owner, $group);
         }
       }
       if (count($group_files) > 0) {
         foreach ($group_files as $bad_file) {
+          //  Parse for just the filename
+          if (preg_match("@$target/(.+)$@", $bad_file, $matches)) {
+            //  If that exists in desired_perms then skip it, since we'll come back
+            //  to it later.
+            if (array_key_exists($matches[1], $desired_perms[$platform])) {
+              log_this("debug", "$bad_file is explicitly defined later, skipping.");
+              continue;
+            }
+          }
           apply_settings($bad_file, $owner, $group);
         }
       }
       break;
   }
   //  Check to see if changes were successful.
-  $new_uid_info = posix_getpwuid(fileowner($file));
-  $new_gid_info = posix_getgrgid(filegroup($file));
-  $new_current_owner = $new_uid_info["name"];
-  $new_current_group = $new_gid_info["name"];
+  $new_current_owner = user_name(fileowner($file));
+  $new_current_group = group_name(filegroup($file));
   if (($new_current_owner == $owner) && ($new_current_group == $group)) {
     return true;
   }
@@ -350,9 +411,10 @@ function apply_settings ($file, $owner, $group) {
  */
 function change_owner ($file, $owner) {
   global $successes, $errors;
-  $uid_info = posix_getpwuid(fileowner($file));
-  $current_owner = $uid_info["name"];
-  exec("/bin/chown $owner $file 2>&1 > /dev/null", $output, $return);
+  //$uid_info = posix_getpwuid(fileowner($file));
+  //$current_owner = $uid_info["name"];
+  $current_owner = user_name(fileowner($file));
+  exec("/bin/chown $owner $file 2>&1", $output, $return);
   if (!$return) {
     log_this("info", "Changed owner of $file from $current_owner to $owner.");
     array_push($successes, $file);
@@ -370,9 +432,10 @@ function change_owner ($file, $owner) {
  */
 function change_group ($file, $group) {
   global $successes, $errors;
-  $gid_info = posix_getgrgid(filegroup($file));
-  $current_group = $gid_info["name"];
-  exec("/bin/chgrp $group $file 2>&1 > /dev/null", $output, $return);
+  //$gid_info = posix_getgrgid(filegroup($file));
+  //$current_group = $gid_info["name"];
+  $current_group = group_name(filegroup($file));
+  exec("/bin/chgrp $group $file 2>&1", $output, $return);
   if (!$return) {
     log_this("info", "Changed group of $file from $current_group to $group.");
     $successes++;
@@ -405,6 +468,28 @@ function user_exists ($user) {
     return false;
   }
   return true;
+}
+
+/**
+ *  Convert uid to user name.
+ */
+function user_name ($uid) {
+  exec("grep $uid /etc/passwd | cut -d':' -f1", $output, $return);
+  if ($return != 0) {
+    return false;
+  }
+  return $output[0];
+}
+
+/**
+ *  Convert gid to group name.
+ */
+function group_name ($gid) {
+  exec("grep $gid /etc/group | cut -d':' -f1", $output, $return);
+  if ($return != 0) {
+    return false;
+  }
+  return $output[0];
 }
 
 ?>
