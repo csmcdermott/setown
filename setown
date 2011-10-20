@@ -135,86 +135,112 @@ $errors = array();
  *      -file: An array of settings for the named file:
  *        -owner: A string specifying the desired owner.
  *        -group: A string specifying the desired group.
+ * 
+ *  In summary, this script applies default ownership settings except
+ *  for the files/folders explictly listed in this array, which are
+ *  applied as described.
  */
 $desired_perms = array(
   "wordpress" => array( 
     "wp-admin" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 755,
     ),
     "wp-content" => array(
   	  "owner" => $owner,
   	  "group" => $group,
+          "perm" => 755,
     ),
     "wp-includes" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 755,
     ),
     "wp-content/uploads" => array(
      "owner" => $webuser,
      "group" => $group,
+      "perm" => 775,
     ),
     ".htaccess" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 644,
     ),
   ),
   "drupal6" => array(
     "sites/default/settings.php" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 644,
     ),
     ".htaccess" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 644,
     ),
     "sites/all/modules" => array(
       "owner" => $owner,
       "group" => $group,
+      "perm" => 775,
     ),
     "sites/all/themes" => array(
       "owner" => $owner,
       "group" => $group,
+      "perm" => 775,
     ),
     "sites/all/libraries" => array(
       "owner" => $owner,
       "group" => $group,
+      "perm" => 775,
     ),
     "sites/default/files" => array(
       "owner" => $webuser,
       "group" => $group,
+      "perm" => 775,
     ),
   ),
   "drupal7" => array(
     "sites/default/settings.php" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 644,
     ),
     ".htaccess" => array(
       "owner" => "root",
       "group" => "root",
+      "perm" => 644,
     ),
     "sites/all/modules" => array(
       "owner" => $owner,
       "group" => $group,
+      "perm" => 775,
     ),
     "sites/all/themes" => array(
       "owner" => $owner,
       "group" => $group,
+      "perm" => 775,
     ),
     "sites/all/libraries" => array(
       "owner" => $owner,
       "group" => $group,
+      "perm" => 775,
     ),
     "sites/default/files" => array(
       "owner" => $webuser,
       "group" => $group,
+      "perm" => 775,
     ),
   ),
 );
 
+
+#change_permission("$target/sites/default/settings.php", 755);
+#exit;
+
+
 //  First apply ownership settings to the root directory
-apply_settings($target, $owner, $group);
+apply_settings($target, $owner, $group, 755);
 //  Next, iterate through each file in the array of settings for the provided
 //  platform and apply the settings to it.
 foreach ($desired_perms[$platform] as $file=>$setting) {
@@ -223,7 +249,7 @@ foreach ($desired_perms[$platform] as $file=>$setting) {
     continue;
   };
   log_this("debug", "Applying ownership settings to $target/$file.");
-  apply_settings("$target/$file", $setting["owner"], $setting["group"]);
+  apply_settings("$target/$file", $setting["owner"], $setting["group"], $setting["perm"]);
 }
 
 //  Check for errors, return true or false, depending.
@@ -335,7 +361,7 @@ function validate_target ($platform, $target) {
  *  @return
  *    True if the settings were applied successfully, otherwise false.
  */
-function apply_settings ($file, $owner, $group) {
+function apply_settings ($file, $owner, $group, $perm) {
   global $debug, $errors, $successes, $desired_perms, $platform, $target;
   if (in_array($file, $errors) || in_array($file, $successes)) { 
     log_this("debug", "$file was already attempted.");
@@ -343,6 +369,7 @@ function apply_settings ($file, $owner, $group) {
   }
   $current_owner = user_name(fileowner($file));
   $current_group = group_name(filegroup($file));
+  $current_perm = substr(decoct(fileperms($file)), 3);
   switch (filetype($file)) {
     case "file": 
       if ($current_owner != $owner) {
@@ -350,6 +377,9 @@ function apply_settings ($file, $owner, $group) {
       }
       if ($current_group != $group) {
         change_group($file, $group);
+      }
+      if ($current_perm != $perm) {
+        change_permission($file, $perm);
       }
       break;
     case "dir":
@@ -376,7 +406,7 @@ function apply_settings ($file, $owner, $group) {
               continue;
             }
           }
-          apply_settings($bad_file, $owner, $group);
+          apply_settings($bad_file, $owner, $group, 755);
         }
       }
       if (count($group_files) > 0) {
@@ -390,7 +420,7 @@ function apply_settings ($file, $owner, $group) {
               continue;
             }
           }
-          apply_settings($bad_file, $owner, $group);
+          apply_settings($bad_file, $owner, $group, 755);
         }
       }
       break;
@@ -398,7 +428,8 @@ function apply_settings ($file, $owner, $group) {
   //  Check to see if changes were successful.
   $new_current_owner = user_name(fileowner($file));
   $new_current_group = group_name(filegroup($file));
-  if (($new_current_owner == $owner) && ($new_current_group == $group)) {
+  $new_current_perm = substr(decoct(fileperms($file)), 3);
+  if (($new_current_owner == $owner) && ($new_current_group == $group) && ($new_current_perm == $perm)) {
     return true;
   }
   else {
@@ -448,6 +479,25 @@ function change_group ($file, $group) {
   }
 }
 
+/**
+ *  Changes the permission of the specified file.
+ */
+function change_permission ($file, $perm) {
+  global $successes, $errors;
+  $current_perm = substr(decoct(fileperms($file)), 3);
+  exec("/bin/chmod $perm $file", $output, $return);
+  if (!$return) {
+    log_this("info", "Changed permission of $file from $current_perm to $perm.");
+    $successes++;
+    return true;
+  }
+  else {
+    log_this("error", "Failed to change permission of $file from $current_perm to $perm.");
+    $errors++;
+    return false;
+  }
+}
+
 /** 
  *  Checks if the specified group exists.
  */
@@ -490,6 +540,18 @@ function group_name ($gid) {
     return false;
   }
   return $output[0];
+}
+
+/**
+ *  Checks if the given permission is valid.
+ */
+function validate_permission ($permission) {
+  if (3 > $permission && $permission > 8) {
+    return true;
+  }
+  else {
+    return false;
+  }
 }
 
 ?>
