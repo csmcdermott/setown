@@ -89,6 +89,19 @@ else {
   $webuser = "apache";
 }
 
+if (isset($options["f"])) {
+  $default_fileperm = $options["f"];
+}
+else {
+  $default_fileperm = 644;
+}
+if (isset($options["y"])) {
+  $default_dirperm = $options["y"];
+}
+else {
+  $default_dirperm = 755;
+}
+
 if (($options["p"] != "wordpress") && ($options["p"] != "drupal6") && ($options["p"] != "drupal7")) { 
   log_this("error", "$options[p] is not a supported platform."); 
   usage(); 
@@ -240,7 +253,7 @@ $desired_perms = array(
 
 
 //  First apply ownership settings to the root directory
-apply_settings($target, $owner, $group, 755);
+apply_settings($target, $owner, $group, $default_fileperm, $default_dirperm);
 //  Next, iterate through each file in the array of settings for the provided
 //  platform and apply the settings to it.
 foreach ($desired_perms[$platform] as $file=>$setting) {
@@ -248,8 +261,8 @@ foreach ($desired_perms[$platform] as $file=>$setting) {
     log_this("debug", "$target/$file does not exist, skipping.");
     continue;
   };
-  log_this("debug", "Applying ownership settings to $target/$file.");
-  apply_settings("$target/$file", $setting["owner"], $setting["group"], $setting["perm"]);
+  log_this("debug", "Applying settings to $target/$file.");
+  apply_settings("$target/$file", $setting["owner"], $setting["group"], $setting["perm"], $setting["perm"]);
 }
 
 //  Check for errors, return true or false, depending.
@@ -361,11 +374,19 @@ function validate_target ($platform, $target) {
  *  @return
  *    True if the settings were applied successfully, otherwise false.
  */
-function apply_settings ($file, $owner, $group, $perm) {
-  global $debug, $errors, $successes, $desired_perms, $platform, $target;
+function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
+  global $debug, $errors, $successes, $desired_perms, $platform, $target, $default_fileperm, $default_dirperm;
   if (in_array($file, $errors) || in_array($file, $successes)) { 
     log_this("debug", "$file was already attempted.");
     return false;
+  }
+  //  Parse for just the filename
+  if (preg_match("@$target/(.+)$@", $file, $matches)) {
+    //  If that doesn't exist in $desired_perms, then set the $fileperm and $dirperm to default
+    if (!array_key_exists($matches[1], $desired_perms[$platform])) {
+      $fileperm = $default_fileperm;
+      $dirperm = $default_dirperm;
+    }
   }
   $current_owner = user_name(fileowner($file));
   $current_group = group_name(filegroup($file));
@@ -378,8 +399,8 @@ function apply_settings ($file, $owner, $group, $perm) {
       if ($current_group != $group) {
         change_group($file, $group);
       }
-      if ($current_perm != $perm) {
-        change_permission($file, $perm);
+      if ($current_perm != $fileperm) {
+        change_permission($file, $fileperm);
       }
       break;
     case "dir":
@@ -389,9 +410,16 @@ function apply_settings ($file, $owner, $group, $perm) {
       if ($current_group != $group) {
         change_group($file, $group);
       }
-      //  Find any files not owned by $owner or $group, and fix them recursively.
+      if ($current_perm != $dirperm) {
+        change_permission($file, $dirperm);
+      }
+      //  Find any files not owned by $owner or $group, and without $dirperm,
+      //  and fix them recursively.
       exec("find $file -not -user $owner", $owner_files);
       exec("find $file -not -group $group", $group_files);
+      exec("find $file -type f -not -perm $fileperm", $perm_files);
+      exec("find $file -type d -not -perm $dirperm", $perm_dirs);
+
       if (count($owner_files) > 0) {
         foreach ($owner_files as $bad_file) {
           if ($bad_file == $file) {
@@ -423,14 +451,45 @@ function apply_settings ($file, $owner, $group, $perm) {
           apply_settings($bad_file, $owner, $group, 755);
         }
       }
+      if (count($perm_files) > 0) {
+        foreach ($perm_files as $bad_file) {
+          //  Parse for just the filename
+          if (preg_match("@$target/(.+)$@", $bad_file, $matches)) {
+            //  If that exists in desired_perms then skip it, since we'll come back
+            //  to it later.
+            if (array_key_exists($matches[1], $desired_perms[$platform])) {
+              log_this("debug", "$bad_file is explicitly defined later, skipping.");
+              continue;
+            }
+          }
+          apply_settings($bad_file, $owner, $group, $fileperm, $dirperm);
+        }
+      }
+      if (count($perm_dirs) > 0) {
+        foreach ($perm_dirs as $bad_file) {
+          //  Parse for just the filename
+          if (preg_match("@$target/(.+)$@", $bad_file, $matches)) {
+            //  If that exists in desired_perms then skip it, since we'll come back
+            //  to it later.
+            if (array_key_exists($matches[1], $desired_perms[$platform])) {
+              log_this("debug", "$bad_file is explicitly defined later, skipping.");
+              continue;
+            }
+          }
+          apply_settings($bad_file, $owner, $group, $fileperm, $dirperm);
+        }
+      }
       break;
   }
   //  Check to see if changes were successful.
   $new_current_owner = user_name(fileowner($file));
   $new_current_group = group_name(filegroup($file));
   $new_current_perm = substr(decoct(fileperms($file)), 3);
-  if (($new_current_owner == $owner) && ($new_current_group == $group) && ($new_current_perm == $perm)) {
-    return true;
+  if (($new_current_owner == $owner) && ($new_current_group == $group)) {
+    if (((filetype($file) == 'file') && ($new_current_perm == $fileperm)) || ((filetype($file) == 'dir') && ($new_current_perm == $dirperm))) {
+      return true;
+    }
+    return false;
   }
   else {
     return false;
@@ -484,7 +543,10 @@ function change_group ($file, $group) {
  */
 function change_permission ($file, $perm) {
   global $successes, $errors;
-  $current_perm = substr(decoct(fileperms($file)), 3);
+  $current_perm = substr(decoct(fileperms($file)), 2);
+  if ($current_perm == $perm) {
+    return true;
+  }
   exec("/bin/chmod $perm $file", $output, $return);
   if (!$return) {
     log_this("info", "Changed permission of $file from $current_perm to $perm.");
