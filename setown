@@ -15,26 +15,31 @@
  *  messages in STDOUT.
  *
  *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
- *    v1.2 7/16/2011
+ *    v1.2 11/04/2011
  *
- *  @param platform
+ *  @param platform (-p)
  *    Specify the software platform to check. Acceptable values are
  *    "wordpress", "drupal6", and "drupal7".
- *  @param target
+ *  @param target (-t)
  *    Specify the directory where the software platform is installed. This is
  *    the base directory used for all file interactions.
- *  @param owner
+ *  @param owner (-o)
  *    Specify a default owner for files in the webroot (perhaps the primary
  *    developer). This is an optional parameter - if it is omitted this
  *    defaults to "root".
- *  @param group
+ *  @param group (-g)
  *    Similar to the owner parameter - this is the default group that should be
  *    applied to webroot files. This is an optional parameter - if it is
  *    omitted this defaults to "root".
- *  @param webuser
+ *  @param webuser (-w) 
  *    Optional. Sets the user account in use by the web server (for things lik
  *    e file upload directories). Defaults to "apache".
- *  @param debug
+ *  @param default_fileperm (-f)
+ *    Optional. Sets the default permissions to use for files. Defaults to 644.
+ *  @param default_dirperm (-i)
+ *    Optional. Sets the default permissions to use for directories. Defaults
+ *    to 755.
+ *  @param debug (-d)
  *    Optionally enable extra debugging statements.
  *
  *  @return
@@ -42,12 +47,12 @@
  */
 putenv('TZ=America/Denver');
 $debug = 0;
-$logfile = "./setown.log";
+$logfile = './setown.log';
 
 // Start parsing arguments
-$options = getopt("p:t:o:g:w:dh");
-if (isset($options["h"])) { usage(); };
-if (!isset($options["p"])) { 
+$options = getopt("p:t:o:g:w:f:i:dh");
+if (isset($options['h'])) { usage(); };
+if (!isset($options['p'])) { 
   log_this("error", "-p option is required."); 
   usage(); 
 }
@@ -89,14 +94,15 @@ else {
   $webuser = "apache";
 }
 
+// If no file or directory permissions are specified, default to 644 and 755.
 if (isset($options["f"])) {
   $default_fileperm = $options["f"];
 }
 else {
   $default_fileperm = 644;
 }
-if (isset($options["y"])) {
-  $default_dirperm = $options["y"];
+if (isset($options['i'])) {
+  $default_dirperm = $options['i'];
 }
 else {
   $default_dirperm = 755;
@@ -148,9 +154,10 @@ $errors = array();
  *      -file: An array of settings for the named file:
  *        -owner: A string specifying the desired owner.
  *        -group: A string specifying the desired group.
+ *        -perm: An int specifying the desired permission.
  * 
- *  In summary, this script applies default ownership settings except
- *  for the files/folders explictly listed in this array, which are
+ *  In summary, this script applies default ownership and permission settings
+ *  except for the files/folders explictly listed in this array, which are
  *  applied as described.
  */
 $desired_perms = array(
@@ -248,12 +255,16 @@ $desired_perms = array(
 );
 
 
-#change_permission("$target/sites/default/settings.php", 755);
-#exit;
-
-
-//  First apply ownership settings to the root directory
+/**
+ *  This is where stuff actually starts happening!
+ *
+ *  First apply ownership settings to the root directory. Because
+ *  apply_settings works recursively, this sets default owner, group
+ *  and permssions on everything that's not explicitly defined in the
+ *  desired_perms array.
+ */
 apply_settings($target, $owner, $group, $default_fileperm, $default_dirperm);
+
 //  Next, iterate through each file in the array of settings for the provided
 //  platform and apply the settings to it.
 foreach ($desired_perms[$platform] as $file=>$setting) {
@@ -263,6 +274,9 @@ foreach ($desired_perms[$platform] as $file=>$setting) {
   };
   log_this("debug", "Applying settings to $target/$file.");
   apply_settings("$target/$file", $setting["owner"], $setting["group"], $setting["perm"], $setting["perm"]);
+  //  I used $setting["perm"] twice because each file specified in $desired_perms has only one permission defined,
+  //  but apply_settings requires 2 because it operates on both files and directories, and needs to know in some
+  //  cases (when it's acting recursively) what to do for both.
 }
 
 //  Check for errors, return true or false, depending.
@@ -275,6 +289,13 @@ else {
 }
 
 /**
+ *  And that's it. The script is done!
+ */
+
+
+
+
+/**
  *  Prints usage information and argument requirements.
  */
 function usage () {
@@ -284,6 +305,8 @@ function usage () {
   echo "  -o owner            username                          optional, defaults to root\n";
   echo "  -g group            groupname                         optional, defaults to root\n";
   echo "  -w webuser          username(apache,www-user)         optional, defaults to apache\n";
+  echo "  -f fileperm         permission(644)                   optional, defaults to 644\n";
+  echo "  -i dirperm          permission(755)                   optional, defaults to 755\n";
   echo "  -d                                                    optional, toggles debug\n\n";
   exit (2);
 }
@@ -370,6 +393,10 @@ function validate_target ($platform, $target) {
  *    User name of desired owner.
  *  @param $group
  *    Name of desired group.
+ *  @param $fileperm
+ *    Permission to use for files.
+ *  @param $dirperm
+ *    Permission to use for directories.
  *
  *  @return
  *    True if the settings were applied successfully, otherwise false.
@@ -413,8 +440,9 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
       if ($current_perm != $dirperm) {
         change_permission($file, $dirperm);
       }
-      //  Find any files not owned by $owner or $group, and without $dirperm,
-      //  and fix them recursively.
+
+      //  Find files that do not have the right owner, group, or permissions.
+      //  We'll go through and fix them all recursively in a second.
       exec("find $file -not -user $owner", $owner_files);
       exec("find $file -not -group $group", $group_files);
       exec("find $file -type f -not -perm $fileperm", $perm_files);
@@ -422,6 +450,7 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
 
       if (count($owner_files) > 0) {
         foreach ($owner_files as $bad_file) {
+          //  If one of the results is the file we're already working on, then skip it.
           if ($bad_file == $file) {
             continue;
           }
@@ -434,7 +463,7 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
               continue;
             }
           }
-          apply_settings($bad_file, $owner, $group, 755);
+          apply_settings($bad_file, $owner, $group, $fileperm, $dirperm);
         }
       }
       if (count($group_files) > 0) {
@@ -448,11 +477,15 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
               continue;
             }
           }
-          apply_settings($bad_file, $owner, $group, 755);
+          apply_settings($bad_file, $owner, $group, $fileperm, $dirperm);
         }
       }
       if (count($perm_files) > 0) {
         foreach ($perm_files as $bad_file) {
+          //  If one of the results is the file we're already working on, then skip it.
+          if ($bad_file == $file) {
+            continue;
+          }
           //  Parse for just the filename
           if (preg_match("@$target/(.+)$@", $bad_file, $matches)) {
             //  If that exists in desired_perms then skip it, since we'll come back
@@ -487,11 +520,14 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
   $new_current_perm = substr(decoct(fileperms($file)), 3);
   if (($new_current_owner == $owner) && ($new_current_group == $group)) {
     if (((filetype($file) == 'file') && ($new_current_perm == $fileperm)) || ((filetype($file) == 'dir') && ($new_current_perm == $dirperm))) {
+      //  If the owner, group, and permissions all look right, then return true.
       return true;
     }
+    //  The permissions are wrong - return false.
     return false;
   }
   else {
+    //  Either the owner or the group is wrong - return false.
     return false;
   }
 }
@@ -501,8 +537,6 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
  */
 function change_owner ($file, $owner) {
   global $successes, $errors;
-  //$uid_info = posix_getpwuid(fileowner($file));
-  //$current_owner = $uid_info["name"];
   $current_owner = user_name(fileowner($file));
   exec("/bin/chown $owner $file 2>&1", $output, $return);
   if (!$return) {
@@ -522,8 +556,6 @@ function change_owner ($file, $owner) {
  */
 function change_group ($file, $group) {
   global $successes, $errors;
-  //$gid_info = posix_getgrgid(filegroup($file));
-  //$current_group = $gid_info["name"];
   $current_group = group_name(filegroup($file));
   exec("/bin/chgrp $group $file 2>&1", $output, $return);
   if (!$return) {
@@ -602,18 +634,6 @@ function group_name ($gid) {
     return false;
   }
   return $output[0];
-}
-
-/**
- *  Checks if the given permission is valid.
- */
-function validate_permission ($permission) {
-  if (3 > $permission && $permission > 8) {
-    return true;
-  }
-  else {
-    return false;
-  }
 }
 
 ?>
