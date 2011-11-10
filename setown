@@ -15,7 +15,7 @@
  *  messages in STDOUT.
  *
  *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
- *    v1.2 11/04/2011
+ *    v1.2 11/09/2011
  *
  *  @param platform (-p)
  *    Specify the software platform to check. Acceptable values are
@@ -300,14 +300,14 @@ else {
  */
 function usage () {
   echo "Usage: setown -p <wordpress|drupal6|drupal7> -t <targetdir> [-o owner] [-g group] [-d]\n";
-  echo "  -p platform         drupal6|drupal7|wordpress         required\n";
-  echo "  -t target           /var/www/html/wordpress           required\n";
-  echo "  -o owner            username                          optional, defaults to root\n";
-  echo "  -g group            groupname                         optional, defaults to root\n";
-  echo "  -w webuser          username(apache,www-user)         optional, defaults to apache\n";
-  echo "  -f fileperm         permission(644)                   optional, defaults to 644\n";
-  echo "  -i dirperm          permission(755)                   optional, defaults to 755\n";
-  echo "  -d                                                    optional, toggles debug\n\n";
+  echo "  -p platform  drupal6|drupal7|wordpress    required\n";
+  echo "  -t target    /var/www/html/wordpress      required\n";
+  echo "  -o owner     username                     optional, defaults to root\n";
+  echo "  -g group     groupname                    optional, defaults to root\n";
+  echo "  -w webuser   username(apache,www-user)    optional, defaults to apache\n";
+  echo "  -f fileperm  permission(644)              optional, defaults to 644\n";
+  echo "  -i dirperm   permission(755)              optional, defaults to 755\n";
+  echo "  -d                                        optional, toggles debug\n\n";
   exit (2);
 }
 
@@ -334,9 +334,11 @@ function log_this ($type, $message) {
     echo "ERROR: " . $message . "\n";
     fwrite($handle, $timestamp . $message . "\n");
   }
-  elseif (($type == "debug") && ($debug == 1)) {
-    echo "DEBUG: " . $message . "\n";
-    //fwrite($handle, $timestamp . $message . "\n");
+  else if ($type == "debug") {
+    if ($debug == 1) {
+      echo "DEBUG: " . $message . "\n";
+      //fwrite($handle, $timestamp . $message . "\n");
+    }
   }
   else {
     fwrite($handle, $timestamp . $message . "\n");
@@ -366,6 +368,10 @@ function validate_target ($platform, $target) {
   }
   else if (preg_match("/drupal/", $platform)) {
     if(!file_exists("$target/sites/default/settings.php") || !file_exists("$target/includes/") || !file_exists("$target/modules/node/")) {
+      log_this("info", "Could not find one of the following three:");
+      log_this("info", "  $target/sites/default/settings.php");
+      log_this("info", "  $target/includes");
+      log_this("info", "  $target/modules/node");
       return false;
     }
     else { return true; }
@@ -417,9 +423,9 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
   }
   $current_owner = user_name(fileowner($file));
   $current_group = group_name(filegroup($file));
-  $current_perm = substr(decoct(fileperms($file)), 3);
   switch (filetype($file)) {
     case "file": 
+      $current_perm = substr(decoct(fileperms($file)), 3);
       if ($current_owner != $owner) {
         change_owner($file, $owner);
       }
@@ -431,6 +437,7 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
       }
       break;
     case "dir":
+      $current_perm = substr(decoct(fileperms($file)), 3);
       if ($current_owner != $owner) {
         change_owner($file, $owner);
       }
@@ -517,7 +524,12 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
   //  Check to see if changes were successful.
   $new_current_owner = user_name(fileowner($file));
   $new_current_group = group_name(filegroup($file));
-  $new_current_perm = substr(decoct(fileperms($file)), 3);
+  if (filetype($file) == "file") {
+    $new_current_perm = substr(decoct(fileperms($file)), 2);
+  }
+  else {
+    $new_current_perm = substr(decoct(fileperms($file)), 3);
+  }
   if (($new_current_owner == $owner) && ($new_current_group == $group)) {
     if (((filetype($file) == 'file') && ($new_current_perm == $fileperm)) || ((filetype($file) == 'dir') && ($new_current_perm == $dirperm))) {
       //  If the owner, group, and permissions all look right, then return true.
@@ -575,7 +587,14 @@ function change_group ($file, $group) {
  */
 function change_permission ($file, $perm) {
   global $successes, $errors;
-  $current_perm = substr(decoct(fileperms($file)), 2);
+
+  if (filetype($file) == "file") {
+    $current_perm = substr(decoct(fileperms($file)), 3);
+  }
+  else {
+    $current_perm = substr(decoct(fileperms($file)), 2);
+  }
+
   if ($current_perm == $perm) {
     return true;
   }
