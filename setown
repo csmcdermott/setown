@@ -170,7 +170,7 @@ $desired_perms = array(
     "wp-content" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 755,
+      "perm" => 1755,
     ),
     "wp-includes" => array(
       "owner" => "root",
@@ -180,7 +180,7 @@ $desired_perms = array(
     "wp-content/uploads" => array(
      "owner" => $webuser,
      "group" => $group,
-     "perm" => 775,
+     "perm" => 1775,
     ),
     ".htaccess" => array(
       "owner" => "root",
@@ -202,22 +202,22 @@ $desired_perms = array(
     "sites/all/modules" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
     "sites/all/themes" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
     "sites/all/libraries" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
     "sites/default/files" => array(
       "owner" => $webuser,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
   ),
   "drupal7" => array(
@@ -234,22 +234,22 @@ $desired_perms = array(
     "sites/all/modules" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
     "sites/all/themes" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
     "sites/all/libraries" => array(
       "owner" => $owner,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
     "sites/default/files" => array(
       "owner" => $webuser,
       "group" => $group,
-      "perm" => 775,
+      "perm" => 1775,
     ),
   ),
 );
