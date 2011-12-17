@@ -15,7 +15,7 @@
  *  messages in STDOUT.
  *
  *  Written by Chris McDermott, AppliedTrust, chris@appliedtrust.com
- *    v1.2 11/09/2011
+ *    v1.3 12/16/2011
  *
  *  @param platform (-p)
  *    Specify the software platform to check. Acceptable values are
@@ -168,9 +168,9 @@ $desired_perms = array(
       "perm" => 755,
     ),
     "wp-content" => array(
-  	  "owner" => $owner,
-  	  "group" => $group,
-          "perm" => 755,
+      "owner" => $owner,
+      "group" => $group,
+      "perm" => 755,
     ),
     "wp-includes" => array(
       "owner" => "root",
@@ -180,7 +180,7 @@ $desired_perms = array(
     "wp-content/uploads" => array(
      "owner" => $webuser,
      "group" => $group,
-      "perm" => 775,
+     "perm" => 775,
     ),
     ".htaccess" => array(
       "owner" => "root",
@@ -421,11 +421,19 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
       $dirperm = $default_dirperm;
     }
   }
+  if (strlen($fileperm) === 4) {
+    $file_substr=2;
+    $dir_substr=1;
+  } else {
+    $file_substr=3;
+    $dir_substr=2;
+  }
   $current_owner = user_name(fileowner($file));
   $current_group = group_name(filegroup($file));
   switch (filetype($file)) {
     case "file": 
-      $current_perm = substr(decoct(fileperms($file)), 3);
+      $current_perm = substr(decoct(fileperms($file)), $file_substr);
+      #log_this("debug", "file: " . $file . "   --  current_perm: " . $current_perm . "\n");
       if ($current_owner != $owner) {
         change_owner($file, $owner);
       }
@@ -433,11 +441,12 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
         change_group($file, $group);
       }
       if ($current_perm != $fileperm) {
-        change_permission($file, $fileperm);
+        change_permission($file, $fileperm, $file_substr);
       }
       break;
     case "dir":
-      $current_perm = substr(decoct(fileperms($file)), 3);
+      $current_perm = substr(decoct(fileperms($file)), $dir_substr);
+      #log_this("debug", "file: " . $file . "   --  current_perm: " . $current_perm . "\n");
       if ($current_owner != $owner) {
         change_owner($file, $owner);
       }
@@ -445,7 +454,7 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
         change_group($file, $group);
       }
       if ($current_perm != $dirperm) {
-        change_permission($file, $dirperm);
+        change_permission($file, $dirperm, $dir_substr);
       }
 
       //  Find files that do not have the right owner, group, or permissions.
@@ -524,14 +533,9 @@ function apply_settings ($file, $owner, $group, $fileperm, $dirperm) {
   //  Check to see if changes were successful.
   $new_current_owner = user_name(fileowner($file));
   $new_current_group = group_name(filegroup($file));
-  if (filetype($file) == "file") {
-    $new_current_perm = substr(decoct(fileperms($file)), 2);
-  }
-  else {
-    $new_current_perm = substr(decoct(fileperms($file)), 3);
-  }
+  #$new_current_perm = substr(decoct(fileperms($file)), 3);
   if (($new_current_owner == $owner) && ($new_current_group == $group)) {
-    if (((filetype($file) == 'file') && ($new_current_perm == $fileperm)) || ((filetype($file) == 'dir') && ($new_current_perm == $dirperm))) {
+    if (((filetype($file) == 'file') && (substr(decoct(fileperms($file)), $file_substr) == $fileperm)) || ((filetype($file) == 'dir') && (substr(decoct(fileperms($file)), $dir_substr) == $dirperm))) {
       //  If the owner, group, and permissions all look right, then return true.
       return true;
     }
@@ -572,12 +576,12 @@ function change_group ($file, $group) {
   exec("/bin/chgrp $group $file 2>&1", $output, $return);
   if (!$return) {
     log_this("info", "Changed group of $file from $current_group to $group.");
-    $successes++;
+    array_push($successes, $file);
     return true;
   }
   else {
     log_this("error", "Failed to change group of $file from $current_group to $group.");
-    $errors++;
+    array_push($errors, $file);
     return false;
   }
 }
@@ -585,28 +589,21 @@ function change_group ($file, $group) {
 /**
  *  Changes the permission of the specified file.
  */
-function change_permission ($file, $perm) {
+function change_permission ($file, $perm, $substr) {
   global $successes, $errors;
-
-  if (filetype($file) == "file") {
-    $current_perm = substr(decoct(fileperms($file)), 3);
-  }
-  else {
-    $current_perm = substr(decoct(fileperms($file)), 2);
-  }
-
+  $current_perm = substr(decoct(fileperms($file)), $substr);
   if ($current_perm == $perm) {
     return true;
   }
   exec("/bin/chmod $perm $file", $output, $return);
   if (!$return) {
     log_this("info", "Changed permission of $file from $current_perm to $perm.");
-    $successes++;
+    array_push($successes, $file);
     return true;
   }
   else {
     log_this("error", "Failed to change permission of $file from $current_perm to $perm.");
-    $errors++;
+    array_push($errors, $file);
     return false;
   }
 }
