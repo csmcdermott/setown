@@ -1,12 +1,20 @@
 Written by Chris McDermott, AppliedTrust
   chris@appliedtrust.com
-  v1.2 11/09/2011
+  v1.3 12/16/2011
 
 
-This script is designed to enforce ownership settings on a wordpress or
-drupal webroot. Permissions are defined n the 3 dimensional array called
-$desired_settings. All files are checked first to see if any settings need
-to be changed; if so, changes are attempted. Both successes and failures
-are logged (log file is ./setown.log). Failures also generate error
-messages in STDOUT.
+This script is designed to enforce ownership and permission settings on a 
+wordpress or drupal webroot. Permissions are defined in the 3 dimensional array 
+called $desired_settings. Both simple, 3-digit, permissions and full 4-digit
+permissions are supported. The sticky bit is set by default on most of the
+specifically defined directories. All files are checked first to see if any settings 
+need to be changed; if so, changes are attempted. Both successes and failures
+are logged (log file is ./setown.log). Failures also generate error messages in 
+STDOUT.
 
+I chose to make this script examine and act on individual files rather than
+recursively on directories so that I could log every change and whether or not 
+it was successful. But that design choice leads to very poor performance when
+there are lots of changes to make. For now, unfortunately, you just have to
+live with that. At some point I'm planning to add a "simple" flag, that will
+instead act recusively on directories, and not log so verbosely. 
